@@ -280,6 +280,164 @@ void test_matrix_inverse() {
     TEST_NEAR(I3(2, 2), 1.0f, 1e-5f);
 }
 
+void test_matrix_utilities() {
+    std::cout << "Testing Matrix Utilities (crossProductMatrix, norms, cotTheta)..." << std::endl;
+
+    // Cross product matrix
+    Vector3r a(1.0f, 2.0f, 3.0f);
+    Vector3r b(4.0f, 5.0f, 6.0f);
+    Matrix3r a_hat;
+    matrix::crossProductMatrix(a, a_hat);
+    Vector3r cross_mat = a_hat * b;
+    Vector3r cross_vec = a.cross(b);
+    TEST_NEAR(cross_mat.x(), cross_vec.x(), 1e-5f);
+    TEST_NEAR(cross_mat.y(), cross_vec.y(), 1e-5f);
+    TEST_NEAR(cross_mat.z(), cross_vec.z(), 1e-5f);
+
+    // Overload
+    Matrix3r a_hat2 = matrix::crossProductMatrix(a);
+    TEST_NEAR(a_hat2(0, 1), a_hat(0, 1), 1e-6f);
+    TEST_NEAR(a_hat2(1, 0), a_hat(1, 0), 1e-6f);
+
+    // cotTheta and norms
+    Vector3r vx(1.0f, 0.0f, 0.0f);
+    Vector3r vy(0.0f, 1.0f, 0.0f);
+    TEST_NEAR(matrix::cotTheta(vx, vy), 0.0f, 1e-5f);
+
+    Matrix3r M;
+    M(0, 0) = 1.0f; M(0, 1) = -2.0f; M(0, 2) = 3.0f;
+    M(1, 0) = 0.0f; M(1, 1) =  1.0f; M(1, 2) = 1.0f;
+    M(2, 0) = 2.0f; M(2, 1) = -1.0f; M(2, 2) = 1.0f;
+    TEST_NEAR(matrix::oneNorm(M), 5.0f, 1e-5f);
+    TEST_NEAR(matrix::infNorm(M), 6.0f, 1e-5f);
+}
+
+void test_decompositions() {
+    std::cout << "Testing Decompositions (Eigen, Polar, SVD)..." << std::endl;
+
+    // Eigen decomposition
+    Matrix3r S;
+    S(0, 0) = 2.0f; S(0, 1) = 1.0f; S(0, 2) = 0.0f;
+    S(1, 0) = 1.0f; S(1, 1) = 3.0f; S(1, 2) = 1.0f;
+    S(2, 0) = 0.0f; S(2, 1) = 1.0f; S(2, 2) = 2.0f;
+    Matrix3r V;
+    Vector3r D;
+    decomposition::eigenDecomposition(S, V, D);
+    Matrix3r IV = V * V.transpose();
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(IV(r, c), (r == c ? 1.0f : 0.0f), 1e-4f);
+        }
+    }
+
+    // Polar decomposition
+    Quaternionr q(AngleAxisr(0.5f, Vector3r(0.0f, 1.0f, 0.0f)));
+    Matrix3r R_true = q.toRotationMatrix();
+    Matrix3r A = R_true * S;
+    Matrix3r R_dec, U_dec, D_dec;
+    decomposition::polarDecomposition(A, R_dec, U_dec, D_dec);
+    Matrix3r IR = R_dec * R_dec.transpose();
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(IR(r, c), (r == c ? 1.0f : 0.0f), 1e-3f);
+        }
+    }
+
+    // Polar decomposition stable
+    Matrix3r R_stable;
+    decomposition::polarDecompositionStable(A, 1e-6f, R_stable);
+    Matrix3r IR_stable = R_stable * R_stable.transpose();
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(IR_stable(r, c), (r == c ? 1.0f : 0.0f), 1e-3f);
+        }
+    }
+
+    // SVD with inversion handling
+    Vector3r sigma;
+    Matrix3r U_svd, VT_svd;
+    decomposition::svdWithInversionHandling(A, sigma, U_svd, VT_svd);
+    Matrix3r diagSigma = Matrix3r::Zero();
+    diagSigma(0, 0) = sigma[0];
+    diagSigma(1, 1) = sigma[1];
+    diagSigma(2, 2) = sigma[2];
+    Matrix3r A_reconstructed = U_svd * diagSigma * VT_svd;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(A(r, c), A_reconstructed(r, c), 1e-3f);
+        }
+    }
+
+    // Extract rotation
+    Quaternionr q_extracted;
+    decomposition::extractRotation(A, q_extracted, 20);
+    TEST_NEAR(std::abs(q_extracted.coeffs().dot(q.coeffs())), 1.0f, 1e-3f);
+}
+
+void test_kinematics_matrix() {
+    std::cout << "Testing Kinematics Matrix (computeMatrixK, G, Q, QHat)..." << std::endl;
+
+    // Test computeMatrixK
+    Vector3r connector(1.0f, 0.5f, -0.2f);
+    Vector3r x(0.0f, 0.0f, 0.0f);
+    Real invMass = 1.5f;
+    Matrix3r invInertia = Matrix3r::Identity();
+    Matrix3r K;
+    matrix::computeMatrixK(connector, invMass, x, invInertia, K);
+
+    // K must be symmetric: K = K^T
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(K(r, c), K(c, r), 1e-6f);
+        }
+    }
+    // Zero invMass gives zero K
+    Matrix3r K_zero;
+    matrix::computeMatrixK(connector, 0.0f, x, invInertia, K_zero);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            TEST_NEAR(K_zero(r, c), 0.0f, 1e-6f);
+        }
+    }
+
+    // Test computeMatrixQ: Q(q) * p = q * p
+    Quaternionr q(0.7071068f, 0.0f, 0.7071068f, 0.0f); // 90 deg around Y
+    Quaternionr p(0.5f, 0.5f, 0.5f, 0.5f);
+    Matrix4r Q = matrix::computeMatrixQ(q);
+
+    // Represent p as vector (w, x, y, z)
+    LinearMath::Matrix<Real, 4, 1> p_vec(p.w(), p.x(), p.y(), p.z());
+    LinearMath::Matrix<Real, 4, 1> qp_vec = Q * p_vec;
+
+    Quaternionr prod = q * p;
+    TEST_NEAR(qp_vec[0], prod.w(), 1e-5f);
+    TEST_NEAR(qp_vec[1], prod.x(), 1e-5f);
+    TEST_NEAR(qp_vec[2], prod.y(), 1e-5f);
+    TEST_NEAR(qp_vec[3], prod.z(), 1e-5f);
+
+    // Test computeMatrixQHat: QHat(q) * p = p * q
+    Matrix4r QHat = matrix::computeMatrixQHat(q);
+    LinearMath::Matrix<Real, 4, 1> pq_vec = QHat * p_vec;
+    Quaternionr prod2 = p * q;
+    TEST_NEAR(pq_vec[0], prod2.w(), 1e-5f);
+    TEST_NEAR(pq_vec[1], prod2.x(), 1e-5f);
+    TEST_NEAR(pq_vec[2], prod2.y(), 1e-5f);
+    TEST_NEAR(pq_vec[3], prod2.z(), 1e-5f);
+
+    // Test computeMatrixG: dot(q) = 0.5 * G(q) * omega
+    // If omega = (0, 1, 0), q * [0, 0, 1, 0] gives 2 * dot(q)
+    Matrix<Real, 4, 3, DontAlign> G = matrix::computeMatrixG(q);
+    Vector3r omega(0.0f, 2.0f, 0.0f);
+    LinearMath::Matrix<Real, 4, 1> q_dot = G * omega;
+    // q * (0, 0, 2, 0) with w=0:
+    Quaternionr omega_quat(0.0f, 0.0f, 2.0f, 0.0f);
+    Quaternionr q_times_omega = q * omega_quat;
+    TEST_NEAR(q_dot[0], 0.5f * q_times_omega.w(), 1e-5f);
+    TEST_NEAR(q_dot[1], 0.5f * q_times_omega.x(), 1e-5f);
+    TEST_NEAR(q_dot[2], 0.5f * q_times_omega.y(), 1e-5f);
+    TEST_NEAR(q_dot[3], 0.5f * q_times_omega.z(), 1e-5f);
+}
+
 int main() {
     std::cout << "========================================" << std::endl;
     std::cout << "Running LinearMath Unit Tests" << std::endl;
@@ -294,6 +452,9 @@ int main() {
     test_quaternions();
     test_diagonal_matrix();
     test_aligned_box();
+    test_matrix_utilities();
+    test_decompositions();
+    test_kinematics_matrix();
 
     std::cout << "========================================" << std::endl;
     std::cout << "All LinearMath tests passed successfully!" << std::endl;
